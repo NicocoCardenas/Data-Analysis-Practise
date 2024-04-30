@@ -1,2 +1,208 @@
-# Data-Analysis-Practise
-This repository contains data analysis techniques and tools. 
+# Introduction to RDD
+
+Without a random process that separates the treatment and control group, the treatment effect can be identified if the assignment to the treatment group follows a regression discontinuity design (RDD). This requires a (running) variable which, at a certain threshold, separates the observations into a treatment and control group.
+
+# Theory of RDD 
+
+Two important variants of RDD: 
+
+- sharp RDD
+  - the threshold separates the treatment and control group exactly, leaving no overlapping points
+- fuzzy RDD
+  - threshold influences the probability of being treated
+  - instrumental variable approach ( LATE )
+
+The value of outcome (Y) for individuals just below the threshold is missing the counterfactual outcome. It increases continuously with the cut-off variable, as opposed to the treatment. 
+
+## Estimation Methods
+
+**Three** main methods to estimate RDD can be distinguished: 
+
+- Method 1 
+  - select a sub-sample for which the value of the running variable is close to the threshold
+  - *problem*: the smaller the sample, the larger the standard errors
+- Method 2
+  - select a large sample and estimate parametrically
+  - *problem*: this depends on the functional forms and the polynomials
+- Method 3
+  - select a sub-sample close to the threshold and estimate parametrically
+  - extension: different functional forms on the left and the right of the cut-off
+
+
+## Advantages of RDD
+
+Individuals near the RDD threshold cut-off are assumed to be nearly identical, expect for characteristic which are affected by the treatment. 
+
+# Replication of RDD Estimation 
+
+```{r, echo = FALSE, eval = TRUE, message=FALSE, warning = F}
+library(dplyr)
+library(ggplot2)
+library(rddtools)
+library(magrittr)
+```
+
+
+## Loading the dataset
+
+----
+
+##### *Abstract*
+*We estimate the effect of alcohol consumption on mortality using the minimum drinking age in a regression discontinuity design. We find large and immediate increases in drinking at age 21, including a 21 percent increase in recent drinking days. We also find a discrete 9 percent increase in the mortality rate at age 21, primarily due to motor vehicle accidents, alcohol-related deaths, and suicides. We estimate a 10 percent increase in the number of drinking days for young adults results in a 4.3 percent increase in mortality. Our results suggest policies that reduce drinking among young adults can have substantial public health benefits. (JEL I12, I18)*
+
+----
+
+
+Let us look at the collected data. 
+
+```{r, warning = F}
+load(file='/Users/nicoco/Downloads/mlda.rda')
+data <- mlda
+
+data %>% 
+  ggplot(aes(agecell,all)) + 
+  geom_point(size = 0.7) + 
+  geom_vline(xintercept = 21, colour = 'black',size = 0.8) + 
+  annotate("text", x = 20.4, y = 105, label = "Minimum Drinking Age", size = 4) + 
+  labs(x = "Age (binned) ", y = "Mortality Rate(per 100.000)")
+  
+
+```
+From this graph, we can see that there is a huge jump in mortality rates after the minimum drinking age law.
+
+
+## Estimation {.tabset}
+
+### Model
+(content)
+RDD can be measured by the ordinary least squares method. The first regression applies the same slope on both sides of the cut-off. 
+
+We must compute a dummy variable (`threshold`), indicating whether an individual is above or below the cut-off point.  The dummy is equal to zero for observations below and equal to one of the observations above the cut-off of 21 years. 
+
+We will use a linear model using the `lm()` function to regress all deaths per 100.00 `all` against the `threshold` dummy variable and the respondent's `age` that is around the cut-off. 
+
+```{r}
+lm_slope <- data %>% 
+  mutate(threshold = ifelse(agecell >=21,1,0)) %$%
+  lm(all ~ threshold + I(agecell - 21))
+
+# Call for summary of the linear model
+
+summary(lm_slope)
+  
+```
+This approach would not alter the treatment effect. From this linear regression, we can see that on average the mortality rate per 100.000 for individuals reaching the cut-off point is **7.6627** points higher. 
+
+### Model using rddtools
+
+This is the alternative approach using the `rddtools` package in R Studio. 
+
+```{r}
+library(rddtools)
+
+rdd_data(x = data$agecell, 
+         y = data$all, 
+         cutpoint = 21) %>% 
+  rdd_reg_lm(slope = "same") %>% 
+  summary()
+```
+Once again, looking at the coefficient on the dummy variable, we can see that on average the mortality rate per 100.000 for individuals reaching the cut-off at the minimum drinking age increases by **7.6627** points. 
+
+### Scatterplot
+
+Let us draw a fitted line with the data on the scatter plot 
+```{r, warning = F}
+data %>% 
+  select(agecell,all) %>% 
+  mutate(threshold = as.factor(ifelse(agecell>= 21,1,0))) %>% 
+  ggplot(aes(agecell,all, colour = threshold)) + 
+  geom_point(size = 0.8) +
+  geom_smooth(method = lm, se = F) + 
+  geom_vline(xintercept = 21, colour = 'black', size = 1) + 
+  labs(x = "Age (binned) ", y = "Mortality Rate (per 100.000)")
+
+
+```
+
+## RDD Continued: {.tabset}
+
+### Same Slope 
+
+Learning how to deal with jumps within the data. We look further into the 2009 study by Carpenter and Dobkin. 
+
+
+Let us look at the effect of the mortality rate in vehicle accidents based on the drinking age. 
+```{r, warning = F}
+data %>% 
+  ggplot(aes(agecell, mva)) + 
+  geom_point(size = 0.9) + 
+  geom_vline(xintercept = 21, size = 0.9, colour= 'black') + 
+  labs(x = "Age (binned)",
+       y = "Mortality Rate in Moving Vehicle Accidents")
+
+
+```
+Once again, there appears to be a huge discontinuity in the points where x = 21. We can further estimate the RDD model: 
+
+$mva=\beta_{0}+\beta_{1}T+\beta_{2}(\textrm{agecell}-21)+\epsilon$ 
+
+Where: 
+
+$T=\left\{ \begin{array}{cl}T=1\textrm{ if agecell is  }\ge 21\\T=0\textrm{ if agecell is }<21\end{array}\right.$
+
+Just how we performed a regression analysis with `Moratlity Rate (per 100.00)`, we will do the same with `mva`
+
+```{r}
+data %>% 
+  mutate(D = ifelse(agecell >=21,1,0)) %$%
+  lm(mva ~ D + I(agecell - 21)) %>% 
+  summary()
+```
+### Varying Slopes 
+
+Instead of using the same slope, we will try to estimate with varying slopes. 
+
+The equation looks almost similar except for one more addition: 
+
+$mva=\beta_{0}+\beta_{1}T+\beta_{2}(\textrm{agecell}-21)+\beta_{3}(\textrm{agecell}-21)T + \epsilon$ 
+
+where: 
+
+$T=\left\{ \begin{array}{cl}T=1\textrm{ if agecell is  }\ge 21\\T=0\textrm{ if agecell is }<21\end{array}\right.$
+
+```{r}
+data %>% 
+  mutate(D = ifelse(agecell >= 21, 1, 0)) %$% 
+  lm(mva ~ D * I(agecell - 21)) %>% 
+  summary()
+```
+
+### Plotting RD Model 
+
+```{r}
+data %>% 
+  select(agecell, mva) %>% 
+  mutate(D = as.factor(ifelse(agecell >= 21, 1, 0))) %>% 
+  ggplot(aes(x = agecell, y = mva)) +
+  geom_point(aes(color = D)) + 
+  geom_smooth(method = "lm", colour = 'black', size = 0.8)
+```
+
+```{r}
+data %>% 
+  select(agecell, mva) %>% 
+  mutate(D = as.factor(ifelse(agecell >= 21, 1, 0))) %>% 
+  ggplot(aes(x = agecell, y = mva, color = D)) +
+  geom_point() + 
+  geom_smooth(method = "lm") + 
+  geom_vline(xintercept = 21, size = 0.8, colour = 'black')
+```
+ 
+ 
+## References 
+
+----
+[GitHub](https://github.com/jrnold/masteringmetrics/tree/master/masteringmetrics/data) 
+
+@carpenter_effects_2007 
+
